@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cyber Snake 🐍</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #050510; overflow: hidden; }
+  @keyframes gridMove { from { background-position: 0 0; } to { background-position: 40px 40px; } }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  @keyframes flicker { 0%,100%{opacity:1} 92%{opacity:1} 93%{opacity:0.3} 95%{opacity:1} 97%{opacity:0.6} }
+  @keyframes scanline { 0% { top: -100%; } 100% { top: 200%; } }
+  @keyframes glitchAnim {
+    0% { transform: translate(0); }
+    20% { transform: translate(-3px, 2px); filter: hue-rotate(30deg); }
+    40% { transform: translate(3px, -2px); filter: hue-rotate(-30deg); }
+    60% { transform: translate(-2px, -1px); }
+    80% { transform: translate(2px, 1px); }
+    100% { transform: translate(0); }
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+  @keyframes fadeUp {
+    from { opacity:1; transform:translateY(0); }
+    to { opacity:0; transform:translateY(-40px); }
+  }
+  .neon-btn {
+    background: transparent;
+    border: 2px solid #00fff7;
+    color: #00fff7;
+    padding: 12px 40px;
+    font-family: 'Courier New', monospace;
+    font-size: 18px;
+    font-weight: bold;
+    letter-spacing: 4px;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: all 0.2s;
+    text-shadow: 0 0 10px #00fff7;
+    box-shadow: 0 0 20px rgba(0,255,247,0.3), inset 0 0 20px rgba(0,255,247,0.05);
+  }
+  .neon-btn:hover {
+    background: rgba(0,255,247,0.1);
+    box-shadow: 0 0 40px rgba(0,255,247,0.6), inset 0 0 30px rgba(0,255,247,0.1);
+    transform: scale(1.03);
+  }
+  .d-btn {
+    background: transparent;
+    border: 1px solid rgba(0,255,247,0.4);
+    color: rgba(0,255,247,0.7);
+    width: 52px; height: 52px;
+    font-size: 22px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .d-btn:active {
+    background: rgba(0,255,247,0.2);
+    box-shadow: 0 0 20px rgba(0,255,247,0.5);
+    transform: scale(0.93);
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+const GRID_SIZE = 20;
+const CELL_SIZE = 24;
+const INITIAL_SPEED = 150;
+
+const DIRECTIONS = {
+  UP: { x: 0, y: -1 },
+  DOWN: { x: 0, y: 1 },
+  LEFT: { x: -1, y: 0 },
+  RIGHT: { x: 1, y: 0 },
+};
+
+const KEY_MAP = {
+  ArrowUp: "UP", ArrowDown: "DOWN", ArrowLeft: "LEFT", ArrowRight: "RIGHT",
+  w: "UP", s: "DOWN", a: "LEFT", d: "RIGHT",
+  W: "UP", S: "DOWN", A: "LEFT", D: "RIGHT",
+};
+
+function randomFood(snake) {
+  let pos;
+  do {
+    pos = { x: Math.floor(Math.random() * GRID_SIZE), y: Math.floor(Math.random() * GRID_SIZE) };
+  } while (snake.some(s => s.x === pos.x && s.y === pos.y));
+  return pos;
+}
+
+function SnakeGame() {
+  const [snake, setSnake] = useState([{ x: 10, y: 10 }]);
+  const [food, setFood] = useState({ x: 5, y: 5 });
+  const [dir, setDir] = useState(DIRECTIONS.RIGHT);
+  const [nextDir, setNextDir] = useState(DIRECTIONS.RIGHT);
+  const [score, setScore] = useState(0);
+  const [highScore, setHighScore] = useState(0);
+  const [status, setStatus] = useState("idle");
+  const [particles, setParticles] = useState([]);
+  const [glitch, setGlitch] = useState(false);
+  const intervalRef = useRef(null);
+  const snakeRef = useRef(snake);
+  const dirRef = useRef(dir);
+  const nextDirRef = useRef(nextDir);
+  const scoreRef = useRef(score);
+  const foodRef = useRef(food);
+
+  snakeRef.current = snake;
+  dirRef.current = dir;
+  nextDirRef.current = nextDir;
+  scoreRef.current = score;
+  foodRef.current = food;
+
+  const spawnParticles = useCallback((x, y) => {
+    const newParticles = Array.from({ length: 8 }, (_, i) => ({
+      id: Date.now() + i,
+      x: x * CELL_SIZE + CELL_SIZE / 2,
+      y: y * CELL_SIZE + CELL_SIZE / 2,
+      vx: (Math.random() - 0.5) * 60,
+      vy: (Math.random() - 0.5) * 60,
+      color: Math.random() > 0.5 ? "#ff2d6e" : "#00fff7",
+    }));
+    setParticles(p => [...p, ...newParticles]);
+    setTimeout(() => setParticles(p => p.filter(pt => !newParticles.find(n => n.id === pt.id))), 600);
+  }, []);
+
+  const triggerGlitch = useCallback(() => {
+    setGlitch(true);
+    setTimeout(() => setGlitch(false), 300);
+  }, []);
+
+  const gameLoop = useCallback(() => {
+    const s = snakeRef.current;
+    const nd = nextDirRef.current;
+    const f = foodRef.current;
+    const head = { x: s[0].x + nd.x, y: s[0].y + nd.y };
+
+    if (head.x < 0 || head.x >= GRID_SIZE || head.y < 0 || head.y >= GRID_SIZE || s.some(seg => seg.x === head.x && seg.y === head.y)) {
+      setStatus("dead");
+      triggerGlitch();
+      clearInterval(intervalRef.current);
+      setHighScore(h => Math.max(h, scoreRef.current));
+      return;
+    }
+
+    setDir(nd);
+    const newSnake = [head, ...s];
+
+    if (head.x === f.x && head.y === f.y) {
+      const newFood = randomFood(newSnake);
+      setFood(newFood);
+      foodRef.current = newFood;
+      setScore(sc => sc + 10);
+      spawnParticles(head.x, head.y);
+    } else {
+      newSnake.pop();
+    }
+    setSnake(newSnake);
+  }, [spawnParticles, triggerGlitch]);
+
+  useEffect(() => {
+    if (status !== "running") return;
+    intervalRef.current = setInterval(gameLoop, INITIAL_SPEED);
+    return () => clearInterval(intervalRef.current);
+  }, [status, gameLoop]);
+
+  useEffect(() => {
+    const handleKey = (e) => {
+      const newDirName = KEY_MAP[e.key];
+      if (!newDirName) return;
+      e.preventDefault();
+      const newDir = DIRECTIONS[newDirName];
+      const cur = dirRef.current;
+      if (newDir.x === -cur.x && newDir.y === -cur.y) return;
+      setNextDir(newDir);
+      nextDirRef.current = newDir;
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  const startGame = () => {
+    const initSnake = [{ x: 10, y: 10 }];
+    setSnake(initSnake);
+    setFood(randomFood(initSnake));
+    setDir(DIRECTIONS.RIGHT);
+    setNextDir(DIRECTIONS.RIGHT);
+    setScore(0);
+    setParticles([]);
+    setStatus("running");
+  };
+
+  const boardPx = GRID_SIZE * CELL_SIZE;
+  const getSnakeColor = (idx, total) => {
+    const t = idx / total;
+    if (t < 0.2) return "#00fff7";
+    if (t < 0.5) return "#7b2fff";
+    return "#ff2d6e";
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: "#050510",
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      fontFamily: "'Courier New', monospace", position: "relative", overflow: "hidden",
+    }}>
+      <div style={{
+        position: "absolute", inset: 0, pointerEvents: "none",
+        backgroundImage: "linear-gradient(rgba(0,255,247,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,247,0.04) 1px, transparent 1px)",
+        backgroundSize: "40px 40px", animation: "gridMove 8s linear infinite",
+      }} />
+      <div style={{ position: "absolute", top: "10%", left: "15%", width: 300, height: 300, background: "radial-gradient(circle, rgba(123,47,255,0.15) 0%, transparent 70%)", pointerEvents: "none" }} />
+      <div style={{ position: "absolute", bottom: "10%", right: "10%", width: 400, height: 400, background: "radial-gradient(circle, rgba(255,45,110,0.1) 0%, transparent 70%)", pointerEvents: "none" }} />
+
+      <div style={{ marginBottom: 24, animation: "flicker 4s infinite" }}>
+        <h1 style={{ color: "#00fff7", fontSize: "clamp(28px, 5vw, 48px)", margin: 0, letterSpacing: "10px", textShadow: "0 0 20px #00fff7, 0 0 40px #00fff7, 0 0 80px rgba(0,255,247,0.5)", textTransform: "uppercase" }}>CYBER SNAKE</h1>
+        <div style={{ width: "100%", height: 1, background: "linear-gradient(90deg, transparent, #ff2d6e, #00fff7, #ff2d6e, transparent)", marginTop: 8 }} />
+      </div>
+
+      <div style={{ display: "flex", gap: 40, marginBottom: 16, fontSize: 14, letterSpacing: 3 }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ color: "rgba(0,255,247,0.5)", fontSize: 10, marginBottom: 2 }}>SCORE</div>
+          <div style={{ color: "#00fff7", fontSize: 26, fontWeight: "bold", textShadow: "0 0 15px #00fff7" }}>{String(score).padStart(4, "0")}</div>
+        </div>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ color: "rgba(255,45,110,0.6)", fontSize: 10, marginBottom: 2 }}>BEST</div>
+          <div style={{ color: "#ff2d6e", fontSize: 26, fontWeight: "bold", textShadow: "0 0 15px #ff2d6e" }}>{String(highScore).padStart(4, "0")}</div>
+        </div>
+      </div>
+
+      <div style={{ position: "relative", width: boardPx, height: boardPx, animation: glitch ? "glitchAnim 0.3s ease" : "none" }}>
+        <div style={{ position: "absolute", inset: -3, border: "2px solid #7b2fff", boxShadow: "0 0 30px rgba(123,47,255,0.6), inset 0 0 30px rgba(123,47,255,0.05)", pointerEvents: "none", zIndex: 10 }}>
+          {[[true,true],[true,false],[false,true],[false,false]].map(([top, left], i) => (
+            <div key={i} style={{ position: "absolute", top: top ? -4 : "auto", bottom: top ? "auto" : -4, left: left ? -4 : "auto", right: left ? "auto" : -4, width: 12, height: 12, background: "#00fff7", boxShadow: "0 0 10px #00fff7" }} />
+          ))}
+        </div>
+        <div style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 9 }}>
+          <div style={{ position: "absolute", left: 0, right: 0, height: "30%", background: "linear-gradient(transparent, rgba(0,255,247,0.03), transparent)", animation: "scanline 3s linear infinite" }} />
+        </div>
+        <div style={{ width: boardPx, height: boardPx, background: "rgba(5,5,20,0.95)", position: "relative", overflow: "hidden" }}>
+          {Array.from({ length: GRID_SIZE }, (_, y) => Array.from({ length: GRID_SIZE }, (_, x) => (
+            <div key={`${x}-${y}`} style={{ position: "absolute", left: x * CELL_SIZE + CELL_SIZE / 2 - 1, top: y * CELL_SIZE + CELL_SIZE / 2 - 1, width: 2, height: 2, borderRadius: "50%", background: "rgba(123,47,255,0.2)" }} />
+          )))}
+
+          <div style={{ position: "absolute", left: food.x * CELL_SIZE + 2, top: food.y * CELL_SIZE + 2, width: CELL_SIZE - 4, height: CELL_SIZE - 4, background: "#ff2d6e", borderRadius: "50%", boxShadow: "0 0 10px #ff2d6e, 0 0 25px rgba(255,45,110,0.8)", animation: "pulse 1s ease-in-out infinite", zIndex: 2 }}>
+            <div style={{ position: "absolute", inset: 4, background: "#ff88aa", borderRadius: "50%" }} />
+          </div>
+
+          {snake.map((seg, idx) => {
+            const isHead = idx === 0;
+            const color = getSnakeColor(idx, snake.length);
+            return (
+              <div key={idx} style={{ position: "absolute", left: seg.x * CELL_SIZE + (isHead ? 1 : 2), top: seg.y * CELL_SIZE + (isHead ? 1 : 2), width: isHead ? CELL_SIZE - 2 : CELL_SIZE - 4, height: isHead ? CELL_SIZE - 2 : CELL_SIZE - 4, background: isHead ? `linear-gradient(135deg, ${color}, #fff)` : color, borderRadius: isHead ? 4 : 3, boxShadow: `0 0 ${isHead ? 15 : 8}px ${color}`, opacity: 1 - idx * 0.02, zIndex: 2 }} />
+            );
+          })}
+
+          {particles.map(p => (
+            <div key={p.id} style={{ position: "absolute", left: p.x + p.vx * 0.3, top: p.y + p.vy * 0.3, width: 4, height: 4, borderRadius: "50%", background: p.color, boxShadow: `0 0 8px ${p.color}`, pointerEvents: "none", animation: "fadeUp 0.6s ease-out forwards", zIndex: 5 }} />
+          ))}
+
+          {status !== "running" && (
+            <div style={{ position: "absolute", inset: 0, background: "rgba(5,5,20,0.88)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 20, backdropFilter: "blur(2px)" }}>
+              {status === "dead" && <div style={{ color: "#ff2d6e", fontSize: 32, fontWeight: "bold", letterSpacing: 6, textShadow: "0 0 20px #ff2d6e", marginBottom: 8, animation: "glitchAnim 0.5s infinite" }}>GAME OVER</div>}
+              {status === "idle" && <div style={{ color: "#7b2fff", fontSize: 14, letterSpacing: 4, marginBottom: 20, textShadow: "0 0 15px #7b2fff", animation: "blink 1.5s infinite" }}>INSERT COIN</div>}
+              {status === "dead" && <div style={{ color: "rgba(0,255,247,0.6)", fontSize: 13, letterSpacing: 3, marginBottom: 24 }}>SCORE: {score}</div>}
+              <button className="neon-btn" onClick={startGame}>{status === "idle" ? "START" : "RETRY"}</button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 24, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+        <button className="d-btn" onClick={() => { if (dirRef.current !== DIRECTIONS.DOWN) { setNextDir(DIRECTIONS.UP); nextDirRef.current = DIRECTIONS.UP; } }}>▲</button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button className="d-btn" onClick={() => { if (dirRef.current !== DIRECTIONS.RIGHT) { setNextDir(DIRECTIONS.LEFT); nextDirRef.current = DIRECTIONS.LEFT; } }}>◀</button>
+          <button className="d-btn" onClick={() => { if (dirRef.current !== DIRECTIONS.DOWN) { setNextDir(DIRECTIONS.DOWN); nextDirRef.current = DIRECTIONS.DOWN; } }}>▼</button>
+          <button className="d-btn" onClick={() => { if (dirRef.current !== DIRECTIONS.LEFT) { setNextDir(DIRECTIONS.RIGHT); nextDirRef.current = DIRECTIONS.RIGHT; } }}>▶</button>
+        </div>
+      </div>
+      <div style={{ marginTop: 16, color: "rgba(0,255,247,0.3)", fontSize: 11, letterSpacing: 2 }}>WASD / ARROW KEYS TO MOVE</div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<SnakeGame />);
+</script>
+</body>
+</html>
